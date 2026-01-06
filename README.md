@@ -1,5 +1,5 @@
 <div align="center">
-    <img src="https://github.com/user-attachments/assets/4403bf84-c300-4d19-b12f-c2acf265953a" alt="FnNAS" />
+    <img src="https://github.com/user-attachments/assets/ea86c39b-4ed6-4f14-b7e6-bc551b495e39" alt="FnNAS" />
 </div>
 <br />
 
