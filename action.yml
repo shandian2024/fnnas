@@ -17,11 +17,7 @@ inputs:
   kernel_repo:
     description: "Select kernel repository."
     required: false
-    default: "ophub/kernel"
-  kernel_usage:
-    description: "Set the tags of the stable kernel."
-    required: false
-    default: "stable"
+    default: "ophub/fnnas"
   fnnas_kernel:
     description: "Select kernel version."
     required: false
@@ -93,7 +89,6 @@ runs:
         make_command=""
         [[ -n "${{ inputs.fnnas_board }}" ]] && make_command="${make_command} -b ${{ inputs.fnnas_board }}"
         [[ -n "${{ inputs.kernel_repo }}" ]] && make_command="${make_command} -r ${{ inputs.kernel_repo }}"
-        [[ -n "${{ inputs.kernel_usage }}" ]] && make_command="${make_command} -u ${{ inputs.kernel_usage }}"
         [[ -n "${{ inputs.fnnas_kernel }}" ]] && make_command="${make_command} -k ${{ inputs.fnnas_kernel }}"
         [[ -n "${{ inputs.auto_kernel }}" ]] && make_command="${make_command} -a ${{ inputs.auto_kernel }}"
         [[ -n "${{ inputs.fnnas_size }}" ]] && make_command="${make_command} -s ${{ inputs.fnnas_size }}"
