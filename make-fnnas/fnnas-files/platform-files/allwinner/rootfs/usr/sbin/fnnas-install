@@ -118,6 +118,12 @@ init_var() {
     dbus-uuidgen --ensure=/etc/machine-id
     dbus-uuidgen --ensure
 
+    # Generate New BOOT_UUID
+    BOOT_UUID="$(cat /proc/sys/kernel/random/uuid)"
+    [[ -z "${BOOT_UUID}" ]] && BOOT_UUID="$(uuidgen)"
+    [[ -z "${BOOT_UUID}" ]] && error_msg "The uuidgen is invalid, cannot continue."
+    FAT_ID_RAW=$(echo "${BOOT_UUID}" | tr -d '-' | cut -c1-8)
+    FAT_ID_FSTAB=$(echo "${FAT_ID_RAW}" | awk '{print toupper(substr($0,1,4) "-" substr($0,5,4))}')
     # Generate New ROOTFS UUID
     ROOTFS_UUID="$(cat /proc/sys/kernel/random/uuid)"
     [[ -z "${ROOTFS_UUID}" ]] && ROOTFS_UUID="$(uuidgen)"
@@ -127,14 +133,15 @@ init_var() {
 # Show partition menu
 show_partition_menu() {
     cat <<EOF
-  ┌────────────────────────────────────────────────────────────────┐
-  │  Disk size is larger than 64GiB.                               │
-  ├───────────┬────────────────────────────────────────────────────┤
-  │  Optional │ Description                                        │
-  ├───────────┼────────────────────────────────────────────────────┤
-  │     1     │ Rootfs partition limit to 64GiB.                   │
-  │     2     │ [default] Rootfs partition expand to full disk.    │
-  └───────────┴────────────────────────────────────────────────────┘
+  ┌────────────────────────────────────────────────────────────────────────┐
+  │  Remaining disk space is greater than 16GiB.                           │
+  ├───────────┬────────────────────────────────────────────────────────────┤
+  │  Optional │ Description                                                │
+  ├───────────┼────────────────────────────────────────────────────────────┤
+  │     1     │ Rootfs partition limit to 16GiB.                           │
+  │     2     │ [default] Rootfs partition expand to full disk (100%).     │
+  │    ≥16    │ Enter a number (GiB) to specify Rootfs partition size.     │
+  └───────────┴────────────────────────────────────────────────────────────┘
 EOF
 }
 
@@ -163,10 +170,11 @@ create_partition() {
     BLANK2="0"
 
     # Set rootfs size limit (Unit: GiB)
-    ROOTFS_SIZE_LIMIT_GiB="64"
+    ROOT_LIMIT_GiB="16"
+
     # Calculate partition size limits(Unit: MiB)
     ROOT_START_MiB="$((BLANK1 + BOOT + BLANK2))"
-    MAX_SIZE_MiB="$((ROOTFS_SIZE_LIMIT_GiB * 1024))"
+    MAX_SIZE_MiB="$((ROOT_LIMIT_GiB * 1024))"
     TARGET_END_MiB="$((ROOT_START_MiB + MAX_SIZE_MiB))"
     # Calculate target end position in bytes
     TARGET_END_BYTES="$((TARGET_END_MiB * 1024 * 1024))"
@@ -174,23 +182,39 @@ create_partition() {
     # Get disk size in bytes
     DISK_SIZE_BYTES="$(lsblk -b -n -o SIZE -d "${DEV_EMMC}")"
     [[ "${DISK_SIZE_BYTES}" =~ ^[0-9]+$ ]] || DISK_SIZE_BYTES="0"
+    [[ "${DISK_SIZE_BYTES}" -le "0" ]] && error_msg "Failed to get eMMC disk size."
+
+    # Calculate the remaining disk space size
+    FREE_SIZE_BYTES="$((DISK_SIZE_BYTES - (ROOT_START_MiB * 1024 * 1024)))"
+    FREE_SIZE_GiB="$((FREE_SIZE_BYTES / 1024 / 1024 / 1024))"
+    echo -e "${INFO} eMMC Disk Free Size: [ ${FREE_SIZE_GiB}GiB ]."
 
     # Default root end position
     ROOT_END_MiB="100%"
 
     # Select partition expansion strategy
-    if [[ "${DISK_SIZE_BYTES}" -gt "${TARGET_END_BYTES}" ]]; then
+    if [[ "${FREE_SIZE_BYTES}" -gt "${TARGET_END_BYTES}" ]]; then
         show_partition_menu
-        echo -ne "${OPTIONS} Please Input ID (Default 2): "
+        echo -ne "${OPTIONS} Please Input ID(1/2) or Size(16 ~ ${FREE_SIZE_GiB}): "
         read deskid
 
-        [[ -z "${deskid}" || ! "${deskid}" =~ ^[12]$ ]] && deskid="2"
-        echo -e "${INFO} Input ID: [ ${deskid} ]"
+        # Validate user input
+        [[ -z "${deskid}" || ! "${deskid}" =~ ^[0-9]+$ ]] && deskid="2"
+        echo -e "${INFO} Input ID or Size: [ ${deskid} ]"
 
+        # Determine partition expansion strategy
         if [[ "${deskid}" == "1" ]]; then
             ROOT_END_MiB="${TARGET_END_MiB}MiB"
-            echo -e "${INFO} Strategy: Limit Rootfs to ${ROOTFS_SIZE_LIMIT_GiB}GiB."
+            echo -e "${INFO} Strategy: Limit Rootfs to ${ROOT_LIMIT_GiB}GiB."
+        elif [[ "${deskid}" == "2" ]]; then
+            ROOT_END_MiB="100%"
+            echo -e "${INFO} Strategy: Expand Rootfs to Full Disk."
+        elif [[ "${deskid}" -ge "${ROOT_LIMIT_GiB}" && "${deskid}" -le "${FREE_SIZE_GiB}" ]]; then
+            CUSTOM_SIZE_MiB="$((deskid * 1024))"
+            ROOT_END_MiB="$((ROOT_START_MiB + CUSTOM_SIZE_MiB))MiB"
+            echo -e "${INFO} Strategy: Custom Rootfs size to ${deskid}GiB."
         else
+            ROOT_END_MiB="100%"
             echo -e "${INFO} Strategy: Expand Rootfs to Full Disk."
         fi
     fi
@@ -201,6 +225,10 @@ create_partition() {
     parted -s "${DEV_EMMC}" mkpart primary fat32 $((BLANK1))MiB $((BLANK1 + BOOT - 1))MiB
     parted -s "${DEV_EMMC}" mkpart primary btrfs ${ROOT_START_MiB}MiB ${ROOT_END_MiB}
     [[ "${?}" -eq "0" ]] || error_msg "Failed to partition internal eMMC using [ parted ]."
+
+    # Inform the kernel of partition table changes
+    partprobe "${DEV_EMMC}" 2>/dev/null
+    sync && sleep 3
 
     # Write bootloader
     if [[ -n "${BOOTLOADER_IMG}" && -f "${BOOTLOADER_IMG}" ]] &&
@@ -213,6 +241,10 @@ create_partition() {
         dd if="${BOOTLOADER_IMG}" of="${DEV_EMMC}" conv=fsync,notrunc bs=8k seek=1
     fi
     [[ "${?}" -eq "0" ]] || error_msg "Failed to write bootloader using [ dd ]."
+
+    # Generate a random disk signature and write it to the eMMC at offset 440
+    dd if=/dev/urandom of="${DEV_EMMC}" bs=1 count=4 seek=440 conv=notrunc status=none
+    sync && sleep 3
 }
 
 # Copy bootfs partition files
@@ -229,7 +261,7 @@ copy_bootfs() {
     fi
 
     echo -e "${INFO} Start formatting BOOTFS partition..."
-    mkfs.vfat -F 32 -n "BOOT_EMMC" ${PART_BOOT}
+    mkfs.vfat -F 32 -i "${FAT_ID_RAW}" -n "BOOT_EMMC" ${PART_BOOT}
     [[ "${?}" -eq "0" ]] || error_msg "Failed to format using [ mkfs.vfat ]."
 
     mount -o rw ${PART_BOOT} ${DIR_INSTALL}
@@ -244,7 +276,7 @@ copy_bootfs() {
     [[ -f "${uenv_conf_file}" ]] && {
         echo -e "${INFO} Update the [ uEnv.txt ] file."
         BOOT_CONF="uEnv.conf"
-        sed -i "s|root=.*console=ttyS0|root=UUID=${ROOTFS_UUID} rootflags=compress=zstd:6 rootfstype=btrfs console=ttyS0|g" ${uenv_conf_file}
+        sed -i "s|root=.*console=ttyS0|root=UUID=${ROOTFS_UUID} rootflags=compress=zstd:1 rootfstype=btrfs console=ttyS0|g" ${uenv_conf_file}
         sed -i "s|sun.*.dtb|${FDTFILE}|g" ${uenv_conf_file}
     }
 
@@ -256,7 +288,7 @@ copy_bootfs() {
         sed -i "s|^fdtfile=.*|fdtfile=${PLATFORM}/${FDTFILE}|g" ${armbianenv_conf_file}
         sed -i "s|^rootfstype=.*|rootfstype=btrfs|g" ${armbianenv_conf_file}
         sed -i "s|^rootdev=.*|rootdev=UUID=${ROOTFS_UUID}|g" ${armbianenv_conf_file}
-        sed -i "s|^rootflags=.*|rootflags=compress=zstd:6|g" ${armbianenv_conf_file}
+        sed -i "s|^rootflags=.*|rootflags=compress=zstd:1|g" ${armbianenv_conf_file}
         sed -i "s|^overlay_prefix=.*|overlay_prefix=${FAMILY}|g" ${armbianenv_conf_file}
     }
 
@@ -265,7 +297,7 @@ copy_bootfs() {
     [[ -f "${boot_extlinux_file}" ]] && {
         echo -e "${INFO} Update the [ extlinux.conf ] file."
         BOOT_CONF="extlinux.conf"
-        sed -i "s|root=.*console=ttyS0|root=UUID=${ROOTFS_UUID} rootflags=compress=zstd:6 rootfstype=btrfs console=ttyS0|g" ${boot_extlinux_file}
+        sed -i "s|root=.*console=ttyS0|root=UUID=${ROOTFS_UUID} rootflags=compress=zstd:1 rootfstype=btrfs console=ttyS0|g" ${boot_extlinux_file}
         sed -i "s|sun.*.dtb|${FDTFILE}|g" ${boot_extlinux_file}
     }
 
@@ -295,7 +327,7 @@ copy_rootfs() {
     mkfs.btrfs -f -U ${ROOTFS_UUID} -L "ROOTFS_EMMC" -m single ${PART_ROOT}
     [[ "${?}" -eq "0" ]] || error_msg "Failed to format using [ mkfs.btrfs ]"
 
-    mount -t btrfs -o compress=zstd:6 ${PART_ROOT} ${DIR_INSTALL}
+    mount -t btrfs -o compress=zstd:1 ${PART_ROOT} ${DIR_INSTALL}
     [[ "${?}" -eq "0" ]] || error_msg "Failed to mount ROOTFS partition."
 
     echo -e "${INFO} Start copy ROOTFS partition data."
@@ -321,9 +353,10 @@ copy_rootfs() {
     echo -e "${INFO} Generate the new fstab file."
     rm -f ${DIR_INSTALL}/etc/fstab
     cat >${DIR_INSTALL}/etc/fstab <<EOF
-UUID=${ROOTFS_UUID}    /        btrfs    defaults,noatime,compress=zstd:6      0 1
-LABEL=BOOT_EMMC        /boot    vfat     discard,defaults                      0 2
-tmpfs                  /tmp     tmpfs    defaults,nosuid                       0 0
+# <file system>   <mount point>   <type>   <options>   <dump>   <pass>
+UUID=${ROOTFS_UUID}       /       btrfs   defaults,noatime,compress=zstd:1        0       1
+UUID=${FAT_ID_FSTAB}      /boot   vfat    defaults,noatime,errors=remount-ro      0       2
+tmpfs                     /tmp    tmpfs   defaults,nosuid                         0       0
 
 EOF
 

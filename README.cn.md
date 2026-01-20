@@ -62,6 +62,7 @@
 2. `Amlogic` 和 `Allwinner` 平台，使用 [Rufus](https://rufus.ie/) 或者 [balenaEtcher](https://www.balena.io/etcher/) 等工具将系统写入 USB 里，然后把写好系统的 USB 插入盒子。到设备接入的路由器里查找新上线的名称是 debian 的设备，查看其 IP 地址（例如：`192.168.1.15`），然后通过浏览器访问 http://192.168.1.15:5666 进入飞牛账号创建界面。创建自定义账号后登录飞牛系统，在 `系统设置` → `SSH` 里开启 SSH 功能，然后使用 SSH 连接工具进入系统终端，输入命令：
 
 ```shell
+sudo -i
 fnnas-install
 ```
 
@@ -72,6 +73,7 @@ fnnas-install
 | -l       | no      | yes/no  | 显示全部设备列表  |
 
 举例: `fnnas-install -m yes -a no`
+提示: 当可用磁盘空间大于 `16GiB` 时，安装程序会提示自定义系统根分区大小，默认设置为 `16GiB`。
 
 - ### 更新 FnNAS 内核
 

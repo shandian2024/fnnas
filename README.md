@@ -63,6 +63,7 @@ Select the FnNAS system corresponding to your box model. View the corresponding 
 2. For `Amlogic` and `Allwinner` platforms, use tools like [Rufus](https://rufus.ie/) or [balenaEtcher](https://www.balena.io/etcher/) to write the system to a USB drive, then insert the prepared USB drive into the box. Check your router for a new device named 'debian' and find its IP address (e.g., `192.168.1.15`). Access http://192.168.1.15:5666 via a browser to enter the FnNAS account creation interface. After creating a custom account and logging into the FnNAS system, enable SSH in `System Settings` → `SSH`. Then use an SSH connection tool to enter the system terminal and enter the command:
 
 ```shell
+sudo -i
 fnnas-install
 ```
 
@@ -73,6 +74,7 @@ fnnas-install
 | -l       | no      | yes/no  | Show full device list |
 
 Example: `fnnas-install -m yes -a no`
+Note: If the available disk space exceeds `16 GiB`, the installer will prompt you to customize the RootFS partition size (Default: `16 GiB`).
 
 - ### Update FnNAS Kernel
 

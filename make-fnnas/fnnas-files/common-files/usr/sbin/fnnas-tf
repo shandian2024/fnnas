@@ -62,30 +62,33 @@ do_checkdisk() {
 # Expand the current partition
 expansion_partition() {
     echo -e "${INFO} Start repairing hard disk size..."
-    printf 'f\n' | parted ---pretend-input-tty /dev/${DISK_NAME} unit MiB print || repair_status="no"
+    printf 'f\n' | parted ---pretend-input-tty /dev/${DISK_NAME} unit s print >/dev/null 2>&1 || repair_status="no"
     [[ "${repair_status}" == "no" ]] && error_msg "Disk size repair failed, stop partitioning."
 
-    pt_num="$(parted -s /dev/${DISK_NAME} print | awk '$1~/[1-9]+/ {print $1}' | wc -l)"
+    pt_num="$(parted -s /dev/${DISK_NAME} print 2>/dev/null | awk '$1~/[1-9]+/ {print $1}' | wc -l)"
     [[ "${pt_num}" -ne "2" ]] && error_msg "Not 2 partitions, stop automatic expansion."
 
-    # 64GiB in bytes(64 * 1024^3)
-    LIMIT_BYTES=$((64 * 1024 * 1024 * 1024))
+    # Set root partition size limit (Unit: GiB)
+    ROOT_LIMIT_GiB="16"
+    # Convert limit to bytes
+    LIMIT_BYTES=$((ROOT_LIMIT_GiB * 1024 * 1024 * 1024))
 
     # Get disk size in bytes
     DISK_SIZE_BYTES="$(lsblk -b -n -o SIZE -d "/dev/${DISK_NAME}")"
-    # Validate disk size
     [[ "${DISK_SIZE_BYTES}" =~ ^[0-9]+$ ]] || DISK_SIZE_BYTES="0"
 
     # Check disk size and select expansion strategy
     if [[ "${DISK_SIZE_BYTES}" -gt "${LIMIT_BYTES}" ]]; then
-        echo -e "${INFO} Expanding partition to 64GiB limit, leaving the rest as unallocated..."
-        # If disk > 64GiB: Expand to 64GiB
-        printf 'Yes\n\n' | parted ---pretend-input-tty /dev/${DISK_NAME} resizepart 2 64GiB
+        echo -e "${INFO} Strategy: Limit partition to ${ROOT_LIMIT_GiB}GiB..."
+        parted -s /dev/${DISK_NAME} resizepart 2 ${ROOT_LIMIT_GiB}GiB
     else
-        echo -e "${INFO} Expanding partition to 100% (Full Disk)..."
-        # If disk <= 64GiB: Expand to 100%
-        printf 'Yes\n-1\n' | parted ---pretend-input-tty /dev/${DISK_NAME} resizepart 2 100%
+        echo -e "${INFO} Strategy: Expand partition to 100% (Full Disk)..."
+        parted -s /dev/${DISK_NAME} resizepart 2 100%
     fi
+
+    # Inform the kernel of partition table changes
+    partprobe /dev/${DISK_NAME} 2>/dev/null
+    sync && sleep 3
 
     echo -e "${INFO} Expansion file system..."
     ROOTFS_TYPE="$(df -hT / | grep "/" | awk '{print $2}')"

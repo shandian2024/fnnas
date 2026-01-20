@@ -138,7 +138,7 @@ mount_try() {
     while [[ "${t}" -le "${max_try}" ]]; do
         # Mount according to the image partition format
         if [[ "${m_type}" == "btrfs" ]]; then
-            mount -t ${m_type} -o discard,compress=zstd:6 ${m_dev} ${m_target} 2>/dev/null
+            mount -t ${m_type} -o discard,compress=zstd:1 ${m_dev} ${m_target} 2>/dev/null
         else
             mount -t ${m_type} -o discard ${m_dev} ${m_target} 2>/dev/null
         fi
@@ -577,6 +577,8 @@ make_image() {
     BOOT_UUID="$(cat /proc/sys/kernel/random/uuid)"
     [[ -z "${BOOT_UUID}" ]] && BOOT_UUID="$(uuidgen)"
     [[ -z "${BOOT_UUID}" ]] && error_msg "The uuidgen is invalid, cannot continue."
+    FAT_ID_RAW=$(echo "${BOOT_UUID}" | tr -d '-' | cut -c1-8)
+    FAT_ID_FSTAB=$(echo "${FAT_ID_RAW}" | awk '{print toupper(substr($0,1,4) "-" substr($0,5,4))}')
     # Confirm ROOTFS_UUID
     ROOTFS_UUID="$(cat /proc/sys/kernel/random/uuid)"
     [[ -z "${ROOTFS_UUID}" ]] && ROOTFS_UUID="$(uuidgen)"
@@ -584,7 +586,7 @@ make_image() {
 
     # Format bootfs partition
     if [[ "${bootfs_type}" == "fat32" ]]; then
-        mkfs.vfat -F 32 -n "BOOT" ${loop_new}p1 >/dev/null 2>&1
+        mkfs.vfat -F 32 -i "${FAT_ID_RAW}" -n "BOOT" ${loop_new}p1 >/dev/null 2>&1
     else
         mkfs.ext4 -F -q -U ${BOOT_UUID} -L "BOOT" -b 4k -m 0 ${loop_new}p1 >/dev/null 2>&1
     fi
@@ -643,6 +645,14 @@ make_image() {
             #echo -e "${INFO} 02. For [ ${board} ] write bootloader: ${BOOTLOADER_IMG}"
         fi
     }
+
+    # Set partition names
+    if [[ "${partition_table_type}" == "msdos" ]]; then
+        dd if=/dev/urandom of="${loop_new}" bs=1 count=4 seek=440 conv=notrunc status=none
+    elif [[ "${partition_table_type}" == "gpt" ]]; then
+        parted -s "${build_image_file}" name 1 BOOT 2>/dev/null
+        parted -s "${build_image_file}" name 2 ROOTFS 2>/dev/null
+    fi
 
     # Special procedures for flashing specific boards
     [[ "${write_board_file}" == "yes" ]] && write_board_bootloader
@@ -766,10 +776,10 @@ refactor_bootfs() {
     }
 
     # Set uEnv.txt & extlinux.conf mount parameters
-    uenv_rootdev="UUID=${ROOTFS_UUID} rootflags=compress=zstd:6 rw rootwait rootfstype=btrfs"
+    uenv_rootdev="UUID=${ROOTFS_UUID} rootflags=compress=zstd:1 rw rootwait rootfstype=btrfs"
     # Set armbianEnv.txt mount parameters
     armbianenv_rootdev="UUID=${ROOTFS_UUID}"
-    armbianenv_rootflags="compress=zstd:6"
+    armbianenv_rootflags="compress=zstd:1"
 
     # Edit the uEnv.txt
     uenv_conf_file="uEnv.txt"
@@ -848,14 +858,14 @@ refactor_rootfs() {
     [[ -f "usr/libexec/polkit-agent-helper-1" ]] && chmod 4755 usr/libexec/polkit-agent-helper-1
 
     # Edit the etc/fstab
-    [[ -f "etc/fstab" ]] || error_msg "The etc/fstab File does not exist."
-    # Set different types of mount parameters
-    fstab_string="defaults,noatime,compress=zstd:6"
-    # Update mount settings
-    sed -i "s|^LABEL=ROOTFS.*|UUID=${ROOTFS_UUID}  /  btrfs  ${fstab_string}  0 1|g" etc/fstab
-    [[ "${bootfs_type}" == "ext4" ]] && {
-        sed -i "s|^LABEL=BOOT.*|UUID=${BOOT_UUID}  /boot  ext4  defaults  0 2|g" etc/fstab
-    }
+    echo "# <file system> <mount point>   <type>  <options>       <dump>  <pass>" >etc/fstab
+    echo "UUID=${ROOTFS_UUID}       /      btrfs  defaults,noatime,compress=zstd:1    0 1" >>etc/fstab
+    if [[ "${bootfs_type}" == "fat32" ]]; then
+        echo "UUID=${FAT_ID_FSTAB}  /boot  vfat   defaults,noatime,errors=remount-ro  0 2" >>etc/fstab
+    else
+        echo "UUID=${BOOT_UUID}     /boot  ext4   defaults,noatime,errors=remount-ro  0 2" >>etc/fstab
+    fi
+    echo "tmpfs                     /tmp   tmpfs  defaults,nosuid  0 0" >>etc/fstab
 
     # Make the .bashrc take effect, Default shell settings file: /etc/default/useradd
     echo '[[ "${SHELL}" == *bash && -f "${HOME}/.bashrc" ]] && . ${HOME}/.bashrc' >>etc/profile
