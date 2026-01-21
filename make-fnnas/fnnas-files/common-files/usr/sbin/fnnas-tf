@@ -80,10 +80,10 @@ expansion_partition() {
     # Check disk size and select expansion strategy
     if [[ "${DISK_SIZE_BYTES}" -gt "${LIMIT_BYTES}" ]]; then
         echo -e "${INFO} Strategy: Limit partition to ${ROOT_LIMIT_GiB}GiB..."
-        parted -s /dev/${DISK_NAME} resizepart 2 ${ROOT_LIMIT_GiB}GiB
+        printf 'Yes\n\n' | parted ---pretend-input-tty /dev/${DISK_NAME} resizepart 2 ${ROOT_LIMIT_GiB}GiB
     else
         echo -e "${INFO} Strategy: Expand partition to 100% (Full Disk)..."
-        parted -s /dev/${DISK_NAME} resizepart 2 100%
+        printf 'Yes\n-1\n' | parted ---pretend-input-tty /dev/${DISK_NAME} resizepart 2 100%
     fi
 
     # Inform the kernel of partition table changes
