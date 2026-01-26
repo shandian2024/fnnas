@@ -530,7 +530,7 @@ update_kernel() {
     fi
 
     # 04. For /usr/lib/modules/${kernel_name}
-    rm -rf "/usr/lib/modules/${kernel_name}"
+    rm -rf /usr/lib/modules/*
     tar -mxzf modules-${PLATFORM}-${kernel_name}.tar.gz -C /usr/lib/modules
     [[ -n "${header_path}" ]] && (cd /usr/lib/modules/${kernel_name}/ && rm -f build source && ln -sf /usr/src/${header_path} build)
     [[ -d "/usr/lib/modules/${kernel_name}" ]] || error_msg "/usr/lib/modules/${kernel_name} kernel folder is missing."
