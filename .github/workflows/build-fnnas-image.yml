@@ -12,9 +12,10 @@ on:
       fnnas_base_version:
         description: "Select fnnas base image version"
         required: false
-        default: "amlogic_453"
+        default: "amlogic_470"
         type: choice
         options:
+          - amlogic_470
           - amlogic_453
           - amlogic_389
           - amlogic_338
@@ -316,8 +317,7 @@ jobs:
 
           input_url="${{ inputs.fnnas_url }}"
           fnnas_base_version="${{ inputs.fnnas_base_version }}"
-          fnnas_img_id="${fnnas_base_version##*_}"
-          [[ -n "${fnnas_img_id}" ]] && build_tag="fnnas_v${fnnas_img_id}" || build_tag="fnnas_save"
+          [[ -n "${fnnas_base_version}" ]] && build_tag="fnnas_${fnnas_base_version}" || build_tag="fnnas_save"
 
           # -------------------------------------------------------
           # Case A: URL specified
